@@ -219,6 +219,214 @@ Cada participante é um nó ativo que:
 
 ---
 
+# Replicação de Dados
+
+## Dados Replicados
+
+O sistema utiliza replicação completa entre os participantes da partida.
+
+Cada nó mantém localmente uma cópia dos seguintes dados:
+
+* Estado do baralho principal
+* Cartas já descartadas na mesa
+* Cartas presentes na mão de cada jogador
+* Ordem dos turnos
+* Histórico de ações executadas
+* Estado atual da partida
+* Informações da sala
+* Mensagens de consenso e validação
+
+Essa abordagem permite que qualquer participante possua uma visão completa do estado do jogo e possa validar independentemente as ações recebidas.
+
+---
+
+## Distribuição das Réplicas
+
+### Estratégia de Distribuição
+
+* Distribuição estática
+
+Ao ingressar na partida, cada jogador recebe uma réplica completa do estado inicial do jogo.
+
+O criador da sala é responsável por distribuir o estado inicial e os dados necessários para sincronização dos participantes.
+
+Após a inicialização, todos os nós passam a manter suas cópias atualizadas através do protocolo de consenso.
+
+---
+
+# Consistência
+
+## Modelo de Consistência
+
+O sistema adota um modelo de **Consistência Forte (Strong Consistency)**.
+
+Características:
+
+* Toda leitura retorna o estado mais recentemente confirmado.
+* Alterações de estado somente são aplicadas após consenso.
+* Nenhum nó pode atualizar localmente o jogo sem validação coletiva.
+* Todos os participantes observam a mesma sequência lógica de eventos.
+
+Esse modelo foi escolhido para evitar divergências entre os estados locais dos jogadores e garantir a integridade das partidas.
+
+---
+
+## Protocolo de Consistência
+
+### Algoritmo Utilizado
+
+* Raft
+
+O protocolo Raft foi escolhido devido à sua simplicidade de implementação e facilidade de entendimento quando comparado a alternativas como Paxos.
+
+Responsabilidades do protocolo:
+
+* Eleição de líder
+* Replicação de comandos
+* Garantia de ordenação das ações
+* Recuperação após falhas do líder
+
+### Implementação
+
+Será utilizada uma biblioteca Node.js compatível com Electron:
+
+* `liferaft`
+
+A biblioteca será integrada à camada de comunicação para coordenar o consenso entre os participantes da sala.
+
+---
+
+# Tolerância a Falhas
+
+## Prioridade do Sistema
+
+Entre disponibilidade e confiabilidade, o projeto prioriza:
+
+### Confiabilidade
+
+Como se trata de um jogo baseado em turnos, é mais importante garantir que:
+
+* Todas as ações sejam recebidas corretamente.
+* O estado permaneça consistente.
+* Nenhuma jogada seja aplicada incorretamente.
+
+Em situações de falha, a partida poderá ser interrompida para preservar a integridade dos dados.
+
+---
+
+## Falhas Toleradas
+
+### Falhas Bizantinas
+
+Parcialmente tratadas através da validação distribuída.
+
+Cada jogador possui conhecimento suficiente do estado para validar as ações recebidas.
+
+Caso o nó líder envie informações incompatíveis com o estado local:
+
+1. A inconsistência é detectada.
+2. O líder é considerado suspeito.
+3. Uma nova eleição é iniciada.
+4. Caso não seja possível estabelecer um novo líder, a partida é encerrada.
+
+**Observação:** o sistema não implementa um protocolo formal de tolerância bizantina (como PBFT), portanto falhas bizantinas não são totalmente suportadas.
+
+---
+
+### Falhas Temporais
+
+Toleradas dentro de limites pré-definidos.
+
+Mecanismo utilizado:
+
+* KeepAlive
+* Timeout de 5 segundos
+
+Fluxo:
+
+1. Um nó deixa de responder.
+2. O timeout é atingido.
+3. O nó é considerado indisponível.
+4. O processo de recuperação ou encerramento da partida é iniciado.
+
+---
+
+### Falhas por Resposta
+
+Não toleradas.
+
+Respostas incorretas comprometem a integridade do estado distribuído e levam ao cancelamento da operação.
+
+---
+
+### Falhas por Omissão
+
+Não toleradas.
+
+A ausência de mensagens impede a validação do consenso necessário para prosseguir com a partida.
+
+---
+
+### Falhas por Crash
+
+Não toleradas durante uma partida ativa.
+
+Caso um participante crítico falhe, o sistema interrompe a execução para evitar inconsistências.
+
+---
+
+## Quantidade de Falhas Suportadas
+
+O sistema suporta:
+
+* Até 1 processo falhante
+
+A partir de duas falhas simultâneas, a manutenção do consenso e da consistência torna-se inviável para o modelo adotado.
+
+---
+
+# Detecção de Falhas
+
+## Estratégia Utilizada
+
+A detecção de falhas ocorre através da combinação de:
+
+### KeepAlive
+
+Mensagens periódicas são enviadas entre os participantes para confirmar que os nós permanecem ativos.
+
+### Timeout
+
+Caso um nó não responda dentro de 5 segundos:
+
+* O nó é marcado como indisponível.
+* O líder pode ser substituído.
+* A partida pode ser encerrada caso a consistência não possa ser garantida.
+
+### Validação de Jogadas
+
+Todas as ações recebidas são verificadas contra:
+
+* Estado local
+* Regras do Uno
+* Sequência de eventos
+
+Qualquer divergência é tratada como possível falha ou comportamento incorreto do nó emissor.
+
+---
+
+# Considerações sobre CAP Theorem
+
+O projeto prioriza:
+
+* **Consistency (C)**
+* **Partition Tolerance (P)**
+
+Em caso de falha de comunicação ou perda de consenso, a disponibilidade da partida pode ser sacrificada para garantir que nenhum estado inconsistente seja propagado entre os participantes.
+
+Portanto, a arquitetura aproxima-se de um modelo **CP** segundo o Teorema CAP.
+
+
 ## Conclusão
 
 Este projeto demonstra como construir um sistema distribuído baseado em consenso usando um jogo simples como estudo de caso. A arquitetura peer-to-peer com validação por contrato garante consistência do estado mesmo sem um servidor central tradicional, enquanto WebSockets permitem comunicação eficiente em tempo real.
