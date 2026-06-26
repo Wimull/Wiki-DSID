@@ -4,7 +4,7 @@
 
 ## Visão Geral
 
-Uno Distribuído é um protótipo de jogo de Uno que explora uma arquitetura peer-to-peer com controle de estado por contrato em uma aplicação desktop moderna. O objetivo é permitir que vários jogadores participem de uma partida distribuída usando Electron, React e TypeScript, com troca de mensagens em tempo real via WebSocket.
+Uno Distribuído é um protótipo de jogo de Uno que explora uma arquitetura peer-to-peer com controle de estado por contrato em uma aplicação desktop moderna. O objetivo é permitir que vários jogadores participem de uma partida distribuída usando Electron, React e TypeScript, Node.js com troca de mensagens em tempo real via TCP.
 
 ---
 
@@ -19,9 +19,8 @@ Uno Distribuído é um protótipo de jogo de Uno que explora uma arquitetura pee
 
 ## Limitações Conhecidas
 
-- Cada jogador pode visualizar a mão de outros jogadores e o baralho.
+- Cada executável pode visualizar a mão de outros jogadores e o baralho, porém isso fica omitido para o jogador, apenas sendo possível acessar usando um explorador de memória.
 - O sistema ainda não resolve problemas de confidencialidade.
-- O foco está na arquitetura distribuída e consenso, não em segurança.
 
 ---
 
@@ -35,13 +34,17 @@ Cada participante é um nó ativo que:
 - Participa da validação das ações
 - Contribui para o consenso distribuído
 
+Existe um nó "líder" que agrega as informações, como por exemplo as mensagens de decisões de cada jogador, e distribui para os demais.
+- Ele é um nó eleito por todos os jogadores e poderá mudar ao passar do tempo.
+- Inicialmente, o nó líder será o criador da sala.
+
 ---
 
 ## Arquitetura de Software
 
 - Plataforma: Electron
 - Interface: React + TypeScript
-- Comunicação: WebSockets persistentes
+- Comunicação: TCP persistentes + Node.js
 
 ### Arquitetura de Mensagens por Contrato
 
@@ -57,12 +60,12 @@ Cada participante é um nó ativo que:
 ### Nomeação
 
 **Recursos identificados**
-- `PlayerID` → jogador
+- `playerID` → jogador
 - `roomID` → sala
-- `messageID` → mensagem
+- `messageID` → mensagem 
 
 **Esquema de nomeação**
-- Plano
+- Nome puro (com identificador, cada nó possui um id único associado a ele)
 
 **Resolução de nomes**
 - Tabela de mapeamento (lookup direto)
@@ -75,10 +78,10 @@ Cada participante é um nó ativo que:
 - Sim, para:
   - Recepção de mensagens
   - Processamento concorrente
-  - Atualização de estado
+  - Atualização de estado (atualiza o estado dentro da camada de comunicação primeiro numa thread separada e depois comunica ela para o front-end na main thread devido as limitações do JS em front-end)
 
 **Modelo de servidor**
-- Stateless  
+- Stateful 
 - Estado mantido localmente e sincronizado via consenso
 
 **Virtualização**
@@ -89,13 +92,13 @@ Cada participante é um nó ativo que:
 
 ### Sincronização e Controle
 
-**Desincronização**
+**Sincronização**
 - Não necessária  
-- Uso de relógio lógico para ordenação de eventos
+- Algoritmo de consenso e jogo em turno já garantem a sincronicidade
 
 **Exclusão mútua distribuída**
 - Não necessária  
-- Consenso já garante consistência
+- Consenso e jogo baseado em turno já garante consistência
 
 **Algoritmo de eleição**
 - Sim  
@@ -108,7 +111,7 @@ Cada participante é um nó ativo que:
 
 **Uso de Pub/Sub**
 - Não utilizado  
-- Comunicação direta via WebSocket (broadcast controlado)
+- Comunicação direta via TCP (broadcast controlado)
 
 ---
 
@@ -116,8 +119,9 @@ Cada participante é um nó ativo que:
 
 - Um jogador assume o papel de **controlador da sala**
 - Responsável por:
-  - Gerenciar IPs dos jogadores
+  - Descobrir o IPs dos jogadores
   - Ajudar na descoberta inicial de pares
+  - Sincronizar o estado da aplicação entre os nós
 - O controlador **não decide sozinho**
 - Toda decisão depende do consenso dos nós
 
@@ -132,7 +136,7 @@ Cada participante é um nó ativo que:
 
 ### Protocolo
 
-- WebSocket
+- TCP
 - Comunicação orientada a eventos
 - Formato JSON
 - Uso de keepAlive para manter conexões
@@ -145,7 +149,7 @@ Cada participante é um nó ativo que:
 {
   "type": "string",
   "seq": 1,
-  "data": {}
+  "data": any //(pacote de dados que muda a partir do tipo da mensagem. Sua estrutura interna é definida por esse tipo.)
 }
 ```
 
@@ -310,7 +314,7 @@ Como se trata de um jogo baseado em turnos, é mais importante garantir que:
 * O estado permaneça consistente.
 * Nenhuma jogada seja aplicada incorretamente.
 
-Em situações de falha, a partida poderá ser interrompida para preservar a integridade dos dados.
+Em situações de falha, a depender do tipo dela, o jogador que ocasionou a falha será retirado da partida ou então será feita uma nova eleição de líder, que se não for possível, resultará no cancelamento da partida.
 
 ---
 
@@ -347,7 +351,7 @@ Fluxo:
 1. Um nó deixa de responder.
 2. O timeout é atingido.
 3. O nó é considerado indisponível.
-4. O processo de recuperação ou encerramento da partida é iniciado.
+4. O jogador é então desconectado da partida.
 
 ---
 
@@ -355,7 +359,7 @@ Fluxo:
 
 Não toleradas.
 
-Respostas incorretas comprometem a integridade do estado distribuído e levam ao cancelamento da operação.
+Respostas incorretas comprometem a integridade do estado distribuído e levam ao cancelamento da conexão com o jogador problemático.
 
 ---
 
@@ -363,7 +367,7 @@ Respostas incorretas comprometem a integridade do estado distribuído e levam ao
 
 Não toleradas.
 
-A ausência de mensagens impede a validação do consenso necessário para prosseguir com a partida.
+A ausência de mensagens impede a validação do consenso necessário para prosseguir com a partida e portando o jogador é retirado da sala.
 
 ---
 
@@ -371,7 +375,7 @@ A ausência de mensagens impede a validação do consenso necessário para pross
 
 Não toleradas durante uma partida ativa.
 
-Caso um participante crítico falhe, o sistema interrompe a execução para evitar inconsistências.
+Caso um participante crítico falhe, o sistema interrompe a conexão para dar prosseguimento com a partada.
 
 ---
 
@@ -429,4 +433,4 @@ Portanto, a arquitetura aproxima-se de um modelo **CP** segundo o Teorema CAP.
 
 ## Conclusão
 
-Este projeto demonstra como construir um sistema distribuído baseado em consenso usando um jogo simples como estudo de caso. A arquitetura peer-to-peer com validação por contrato garante consistência do estado mesmo sem um servidor central tradicional, enquanto WebSockets permitem comunicação eficiente em tempo real.
+Este projeto demonstra como construir um sistema distribuído baseado em consenso usando um jogo simples como estudo de caso. A arquitetura peer-to-peer com validação por contrato garante consistência do estado mesmo sem um servidor central tradicional, enquanto conexões TCP permitem comunicação eficiente em tempo real.
